@@ -1,0 +1,16 @@
+{
+  "name": "mission-control",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently -k -n api,web -c cyan,magenta \"npm run dev:backend\" \"npm run dev:frontend\"",
+    "dev:backend": "$HOME/.dotnet/dotnet run --project backend --launch-profile http",
+    "dev:frontend": "npm --prefix frontend run dev -- --host 0.0.0.0",
+    "lint": "npm --prefix frontend run lint",
+    "typecheck": "npm --prefix frontend run typecheck",
+    "test": "$HOME/.dotnet/dotnet test MissionControl.sln",
+    "build": "$HOME/.dotnet/dotnet build MissionControl.sln --no-restore && npm --prefix frontend run build"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  }
+}
