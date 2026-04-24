@@ -1,5 +1,5 @@
 SHELL := /usr/bin/env bash
-DOTNET ?= $(HOME)/.dotnet/dotnet
+DOTNET ?= $(if $(shell command -v dotnet 2>/dev/null),$(shell command -v dotnet),$(HOME)/.dotnet/dotnet)
 NPM ?= npm
 
 .PHONY: setup env-check format format-check lint test typecheck build dev ci
