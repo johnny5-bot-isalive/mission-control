@@ -7,7 +7,7 @@
     "dev:frontend": "npm --prefix frontend run dev -- --host 0.0.0.0",
     "lint": "npm --prefix frontend run lint",
     "typecheck": "npm --prefix frontend run typecheck",
-    "test": "$HOME/.dotnet/dotnet test MissionControl.sln",
+    "test": "$HOME/.dotnet/dotnet test MissionControl.sln && npm --prefix frontend run test",
     "build": "$HOME/.dotnet/dotnet build MissionControl.sln --no-restore && npm --prefix frontend run build"
   },
   "devDependencies": {

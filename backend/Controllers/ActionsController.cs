@@ -1,24 +1,12 @@
-using System.Diagnostics;
 using System.Text;
 using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Mvc;
+using Swashbuckle.AspNetCore.Annotations;
 
 namespace backend.Controllers;
 
-public sealed record RunProjectChecksRequest(string ProjectName);
-public sealed record CreateProjectRequest(string ProjectName, string? Summary);
+public sealed record CreateProjectRequest(string ProjectName, string? Summary, string? ProjectType = null);
 
-public sealed record ActionCommandResult(
-    string Command,
-    int ExitCode,
-    long DurationMs,
-    string Output,
-    bool Success);
-
-public sealed record RunProjectChecksResponse(
-    string ProjectName,
-    string RepoPath,
-    IReadOnlyList<ActionCommandResult> Commands);
 
 public sealed record PlannedWriteResponse(string Path, bool Exists);
 
@@ -69,100 +57,25 @@ public sealed record ArchiveProjectPreviewResponse(
     IReadOnlyList<string> PlannedSteps,
     IReadOnlyList<string> RegistryNotesToRemove);
 
-public sealed record DispatchHelperPreviewRequest(
-    string ProjectName,
-    string HelperType,
-    string? Notes);
-
-public sealed record DispatchHelperPreviewResponse(
-    string ProjectName,
-    string HelperType,
-    string Agent,
-    string RepoPath,
-    string Summary,
-    IReadOnlyList<string> PlannedSteps,
-    string? Notes);
-
-public sealed record DispatchHelperRunResponse(
-    string ProjectName,
-    string HelperType,
-    string Agent,
-    string RepoPath,
-    string Summary,
-    IReadOnlyList<string> PlannedSteps,
-    string? Notes,
-    string SandboxMode,
-    long DurationMs,
-    int ExitCode,
-    bool Success,
-    string FinalMessage,
-    string Output);
-
 [ApiController]
 [Route("api/actions")]
 public sealed class ActionsController : ControllerBase
 {
-    private const string DefaultReposRoot = "/home/jaret/repos";
     private const string DefaultVaultRoot = "/mnt/c/Users/Jaret/Obsidian/The Nexus";
     private const string RegistryRelativePath = "40 Agent Nexus/Project Registry.md";
-
-    private static string ReposRoot =>
-        Environment.GetEnvironmentVariable("MISSION_CONTROL_REPOS_ROOT") ?? DefaultReposRoot;
 
     private static string VaultRoot =>
         Environment.GetEnvironmentVariable("MISSION_CONTROL_VAULT_ROOT") ?? DefaultVaultRoot;
 
     /// <summary>
-    /// Runs the standard validation commands for a project's local repository.
-    /// </summary>
-    [HttpPost("run-project-checks")]
-    public async Task<ActionResult<RunProjectChecksResponse>> RunProjectChecks(
-        [FromBody] RunProjectChecksRequest request,
-        CancellationToken cancellationToken)
-    {
-        if (string.IsNullOrWhiteSpace(request.ProjectName))
-        {
-            return BadRequest("Project name is required.");
-        }
-
-        var repoPath = ResolveRepoPath(request.ProjectName);
-        if (repoPath is null)
-        {
-            return BadRequest($"No repo found for project '{request.ProjectName}'.");
-        }
-
-        var commands = new[]
-        {
-            "npm test",
-            "npm run build",
-        };
-
-        var results = new List<ActionCommandResult>();
-        foreach (var command in commands)
-        {
-            var result = await RunCommand(repoPath, command, cancellationToken);
-            results.Add(result);
-
-            if (!result.Success)
-            {
-                break;
-            }
-        }
-
-        return Ok(new RunProjectChecksResponse(
-            ProjectName: request.ProjectName,
-            RepoPath: repoPath,
-            Commands: results));
-    }
-
-    /// <summary>
     /// Previews the markdown files and registry row that would be created for a new project.
     /// </summary>
     [HttpPost("create-project/preview")]
+    [SwaggerOperation(Summary = "Previews the markdown files and registry row that would be created for a new project.")]
     public ActionResult<CreateProjectPreviewResponse> PreviewCreateProject(
         [FromBody] CreateProjectRequest request)
     {
-        var plan = BuildCreateProjectPlan(request.ProjectName, request.Summary);
+        var plan = BuildCreateProjectPlan(request.ProjectName, request.Summary, request.ProjectType);
         if (!plan.Success)
         {
             return BadRequest(plan.ErrorMessage);
@@ -175,10 +88,11 @@ public sealed class ActionsController : ControllerBase
     /// Creates a new project folder, starter markdown files, and registry row using the settled Mission Control contract.
     /// </summary>
     [HttpPost("create-project")]
+    [SwaggerOperation(Summary = "Creates a new project folder, starter markdown files, and registry row using the settled Mission Control contract.")]
     public ActionResult<CreateProjectPreviewResponse> CreateProject(
         [FromBody] CreateProjectRequest request)
     {
-        var plan = BuildCreateProjectPlan(request.ProjectName, request.Summary);
+        var plan = BuildCreateProjectPlan(request.ProjectName, request.Summary, request.ProjectType);
         if (!plan.Success)
         {
             return BadRequest(plan.ErrorMessage);
@@ -190,10 +104,14 @@ public sealed class ActionsController : ControllerBase
             return BadRequest("One or more target files already exist. Review the preview before trying again.");
         }
 
-        Directory.CreateDirectory(response.FolderPath);
+        foreach (var directory in plan.DirectoriesToCreate)
+        {
+            Directory.CreateDirectory(directory);
+        }
 
         foreach (var file in plan.FilesToWrite)
         {
+            Directory.CreateDirectory(Path.GetDirectoryName(file.Path)!);
             System.IO.File.WriteAllText(file.Path, file.Content);
         }
 
@@ -205,6 +123,7 @@ public sealed class ActionsController : ControllerBase
     /// Previews which backlog cards are eligible to move into the active sprint and which markdown files would change.
     /// </summary>
     [HttpPost("activate-sprint/preview")]
+    [SwaggerOperation(Summary = "Previews which backlog cards are eligible to move into the active sprint and which markdown files would change.")]
     public ActionResult<ActivateSprintPreviewResponse> PreviewActivateSprint(
         [FromBody] ActivateSprintRequest request)
     {
@@ -221,6 +140,7 @@ public sealed class ActionsController : ControllerBase
     /// Moves eligible backlog cards into the sprint-ready lane and applies the related markdown updates.
     /// </summary>
     [HttpPost("activate-sprint")]
+    [SwaggerOperation(Summary = "Moves eligible backlog cards into the sprint-ready lane and applies the related markdown updates.")]
     public ActionResult<ActivateSprintPreviewResponse> ActivateSprint(
         [FromBody] ActivateSprintRequest request)
     {
@@ -242,6 +162,7 @@ public sealed class ActionsController : ControllerBase
     /// Toggles a project between active and inactive, updating the registry and project-local status frontmatter.
     /// </summary>
     [HttpPost("set-project-active-state")]
+    [SwaggerOperation(Summary = "Toggles a project between active and inactive, updating the registry and project-local status frontmatter.")]
     public ActionResult<SetProjectActiveStateResponse> SetProjectActiveState(
         [FromBody] SetProjectActiveStateRequest request)
     {
@@ -263,6 +184,7 @@ public sealed class ActionsController : ControllerBase
     /// Previews the registry cleanup and folder move that would archive a project.
     /// </summary>
     [HttpPost("archive-project/preview")]
+    [SwaggerOperation(Summary = "Previews the registry cleanup and folder move that would archive a project.")]
     public ActionResult<ArchiveProjectPreviewResponse> PreviewArchiveProject(
         [FromBody] ArchiveProjectRequest request)
     {
@@ -279,6 +201,7 @@ public sealed class ActionsController : ControllerBase
     /// Archives a project by removing its live registry entry, updating markdown state, and moving the folder into the archive area.
     /// </summary>
     [HttpPost("archive-project")]
+    [SwaggerOperation(Summary = "Archives a project by removing its live registry entry, updating markdown state, and moving the folder into the archive area.")]
     public ActionResult<ArchiveProjectPreviewResponse> ArchiveProject(
         [FromBody] ArchiveProjectRequest request)
     {
@@ -288,275 +211,61 @@ public sealed class ActionsController : ControllerBase
             return BadRequest(plan.ErrorMessage);
         }
 
-        Directory.CreateDirectory(Path.GetDirectoryName(plan.Response!.ArchiveFolderPath)!);
-
-        foreach (var file in plan.FilesToWrite)
-        {
-            System.IO.File.WriteAllText(file.Path, file.Content);
-        }
-
-        Directory.Move(plan.SourceFolderPath, plan.Response.ArchiveFolderPath);
-        return Ok(plan.Response);
-    }
-
-    /// <summary>
-    /// Previews a bounded helper run, including the chosen agent, sandbox mode, and planned execution steps.
-    /// </summary>
-    [HttpPost("helper-dispatch/preview")]
-    public ActionResult<DispatchHelperPreviewResponse> PreviewHelperDispatch(
-        [FromBody] DispatchHelperPreviewRequest request)
-    {
-        var plan = BuildHelperDispatchPlan(request.ProjectName, request.HelperType, request.Notes);
-        if (!plan.Success)
-        {
-            return BadRequest(plan.ErrorMessage);
-        }
-
-        return Ok(plan.Preview!);
-    }
-
-    /// <summary>
-    /// Executes a bounded helper run against the local repository and returns the full command result.
-    /// </summary>
-    [HttpPost("helper-dispatch")]
-    public async Task<ActionResult<DispatchHelperRunResponse>> DispatchHelper(
-        [FromBody] DispatchHelperPreviewRequest request,
-        CancellationToken cancellationToken)
-    {
-        var plan = BuildHelperDispatchPlan(request.ProjectName, request.HelperType, request.Notes);
-        if (!plan.Success)
-        {
-            return BadRequest(plan.ErrorMessage);
-        }
-
-        var result = await RunCodexHelper(plan.Preview!, plan.Prompt, plan.SandboxMode, cancellationToken);
-        return Ok(result);
-    }
-
-    private static (bool Success, string? ErrorMessage, DispatchHelperPreviewResponse? Preview, string Prompt, string SandboxMode) BuildHelperDispatchPlan(
-        string projectName,
-        string helperType,
-        string? notes)
-    {
-        if (string.IsNullOrWhiteSpace(projectName))
-        {
-            return (false, "Project name is required.", null, string.Empty, string.Empty);
-        }
-
-        if (string.IsNullOrWhiteSpace(helperType))
-        {
-            return (false, "Helper type is required.", null, string.Empty, string.Empty);
-        }
-
-        var cleanProjectName = projectName.Trim();
-        var repoPath = ResolveRepoPath(cleanProjectName);
-        if (repoPath is null)
-        {
-            return (false, $"No repo found for project '{cleanProjectName}'.", null, string.Empty, string.Empty);
-        }
-
-        var trimmedNotes = string.IsNullOrWhiteSpace(notes) ? null : notes.Trim();
-        var normalizedHelperType = helperType.Trim().ToLowerInvariant();
-
-        var plan = normalizedHelperType switch
-        {
-            "tests" => (
-                Preview: new DispatchHelperPreviewResponse(
-                    ProjectName: cleanProjectName,
-                    HelperType: "tests",
-                    Agent: "codex",
-                    RepoPath: repoPath,
-                    Summary: "Ask Codex for a bounded repo-check pass focused on test failures, build failures, or obvious fix-forward work.",
-                    PlannedSteps: [
-                        "Open the project repo in Codex as the bounded working target.",
-                        "Run the existing test/build checks and summarize failures or confirm green state.",
-                        "If something small and safe is broken, fix it and report the exact change set.",
-                    ],
-                    Notes: trimmedNotes),
-                Prompt: BuildHelperPrompt(cleanProjectName, "tests", trimmedNotes),
-                SandboxMode: "workspace-write"),
-            "ci-wiring" => (
-                Preview: new DispatchHelperPreviewResponse(
-                    ProjectName: cleanProjectName,
-                    HelperType: "ci-wiring",
-                    Agent: "codex",
-                    RepoPath: repoPath,
-                    Summary: "Ask Codex for a narrow CI/setup pass, limited to scripts, workflows, or verification glue already implied by the repo.",
-                    PlannedSteps: [
-                        "Inspect the repo's existing scripts and workflow files.",
-                        "Wire or repair the smallest missing CI/setup piece needed for repeatable checks.",
-                        "Return the exact files changed plus any follow-up risk or approval boundary.",
-                    ],
-                    Notes: trimmedNotes),
-                Prompt: BuildHelperPrompt(cleanProjectName, "ci-wiring", trimmedNotes),
-                SandboxMode: "workspace-write"),
-            "cleanup" => (
-                Preview: new DispatchHelperPreviewResponse(
-                    ProjectName: cleanProjectName,
-                    HelperType: "cleanup",
-                    Agent: "codex",
-                    RepoPath: repoPath,
-                    Summary: "Ask Codex for low-risk cleanup only, things like dead code removal, naming cleanup, or small readability refactors.",
-                    PlannedSteps: [
-                        "Inspect the current repo surface for obvious low-risk cleanup candidates.",
-                        "Avoid architecture pivots or behavior changes unless they are tiny and clearly justified.",
-                        "Return a concise cleanup summary plus exact edited files.",
-                    ],
-                    Notes: trimmedNotes),
-                Prompt: BuildHelperPrompt(cleanProjectName, "cleanup", trimmedNotes),
-                SandboxMode: "workspace-write"),
-            "review-pass" => (
-                Preview: new DispatchHelperPreviewResponse(
-                    ProjectName: cleanProjectName,
-                    HelperType: "review-pass",
-                    Agent: "codex",
-                    RepoPath: repoPath,
-                    Summary: "Ask Codex for a bounded review pass focused on quality, risk, and next concrete moves without turning it into an open-ended swarm.",
-                    PlannedSteps: [
-                        "Inspect the current project slice and recent action surfaces.",
-                        "Call out the sharpest risks, missing guardrails, or obvious follow-up work.",
-                        "Return a short review brief with recommended next steps.",
-                    ],
-                    Notes: trimmedNotes),
-                Prompt: BuildHelperPrompt(cleanProjectName, "review-pass", trimmedNotes),
-                SandboxMode: "read-only"),
-            _ => default
-        };
-
-        return plan.Preview is null
-            ? (false, $"Unsupported helper type '{helperType}'.", null, string.Empty, string.Empty)
-            : (true, null, plan.Preview, plan.Prompt, plan.SandboxMode);
-    }
-
-    private static string BuildHelperPrompt(string projectName, string helperType, string? notes)
-    {
-        var notesBlock = string.IsNullOrWhiteSpace(notes)
-            ? string.Empty
-            : $"\nOperator notes:\n{notes.Trim()}\n";
-
-        return helperType switch
-        {
-            "tests" => $"You are Codex acting as a bounded helper for the project '{projectName}'. Work only inside the current repo. Run the existing test and build checks, summarize failures or confirm green state, and only make the smallest safe fixes if something obvious is broken. Do not broaden scope into architecture changes or unrelated cleanup. Report exactly what you changed, what remains, and any follow-up risk.{notesBlock}",
-            "ci-wiring" => $"You are Codex acting as a bounded helper for the project '{projectName}'. Inspect the existing scripts and workflow files, then wire or repair the smallest missing CI or setup piece needed for repeatable checks. Stay narrow, avoid speculative platform expansion, and report exact file changes plus any approval boundary or remaining gap.{notesBlock}",
-            "cleanup" => $"You are Codex acting as a bounded helper for the project '{projectName}'. Perform only low-risk cleanup, things like dead code removal, naming cleanup, or tiny readability refactors. Avoid architecture pivots and avoid behavior changes unless they are truly minimal and clearly justified. Report exact files changed and why.{notesBlock}",
-            "review-pass" => $"You are Codex acting as a bounded helper for the project '{projectName}'. Do a read-only review pass over the current repo state. Do not modify files. Return a short report covering the sharpest risks, missing guardrails, and the next concrete steps worth taking. Keep it concise and specific.{notesBlock}",
-            _ => throw new InvalidOperationException($"Unsupported helper type '{helperType}'.")
-        };
-    }
-
-    private static async Task<DispatchHelperRunResponse> RunCodexHelper(
-        DispatchHelperPreviewResponse preview,
-        string prompt,
-        string sandboxMode,
-        CancellationToken cancellationToken)
-    {
-        var output = new StringBuilder();
-        var finalMessagePath = Path.GetTempFileName();
-        var stopwatch = Stopwatch.StartNew();
+        var response = plan.Response!;
+        var originalFileContents = plan.FilesToWrite.ToDictionary(
+            file => file.Path,
+            file => System.IO.File.Exists(file.Path) ? System.IO.File.ReadAllText(file.Path) : null,
+            StringComparer.Ordinal);
+        var moved = false;
 
         try
         {
-            using var process = new Process
-            {
-                StartInfo = new ProcessStartInfo
-                {
-                    FileName = "codex",
-                    WorkingDirectory = preview.RepoPath,
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    RedirectStandardInput = true,
-                    UseShellExecute = false,
-                },
-            };
+            Directory.CreateDirectory(Path.GetDirectoryName(response.ArchiveFolderPath)!);
 
-            process.StartInfo.ArgumentList.Add("exec");
-            process.StartInfo.ArgumentList.Add("--ephemeral");
-            process.StartInfo.ArgumentList.Add("--skip-git-repo-check");
-            process.StartInfo.ArgumentList.Add("-C");
-            process.StartInfo.ArgumentList.Add(preview.RepoPath);
-            process.StartInfo.ArgumentList.Add("-o");
-            process.StartInfo.ArgumentList.Add(finalMessagePath);
-
-            if (string.Equals(sandboxMode, "read-only", StringComparison.OrdinalIgnoreCase))
+            foreach (var file in plan.FilesToWrite)
             {
-                process.StartInfo.ArgumentList.Add("--sandbox");
-                process.StartInfo.ArgumentList.Add("read-only");
-            }
-            else
-            {
-                process.StartInfo.ArgumentList.Add("--full-auto");
+                System.IO.File.WriteAllText(file.Path, file.Content);
             }
 
-            process.StartInfo.ArgumentList.Add("-");
-
-            process.OutputDataReceived += (_, args) =>
-            {
-                if (args.Data is not null)
-                {
-                    output.AppendLine(args.Data);
-                }
-            };
-            process.ErrorDataReceived += (_, args) =>
-            {
-                if (args.Data is not null)
-                {
-                    output.AppendLine(args.Data);
-                }
-            };
-
-            process.Start();
-            process.BeginOutputReadLine();
-            process.BeginErrorReadLine();
-            await process.StandardInput.WriteAsync(prompt);
-            process.StandardInput.Close();
-            await process.WaitForExitAsync(cancellationToken);
-            stopwatch.Stop();
-
-            var finalMessage = System.IO.File.Exists(finalMessagePath)
-                ? System.IO.File.ReadAllText(finalMessagePath).Trim()
-                : string.Empty;
-
-            return new DispatchHelperRunResponse(
-                ProjectName: preview.ProjectName,
-                HelperType: preview.HelperType,
-                Agent: preview.Agent,
-                RepoPath: preview.RepoPath,
-                Summary: preview.Summary,
-                PlannedSteps: preview.PlannedSteps,
-                Notes: preview.Notes,
-                SandboxMode: sandboxMode,
-                DurationMs: stopwatch.ElapsedMilliseconds,
-                ExitCode: process.ExitCode,
-                Success: process.ExitCode == 0,
-                FinalMessage: string.IsNullOrWhiteSpace(finalMessage) ? "No final message captured." : finalMessage,
-                Output: output.ToString().Trim());
+            Directory.Move(plan.SourceFolderPath, response.ArchiveFolderPath);
+            moved = true;
+            return Ok(response);
         }
-        finally
+        catch (Exception ex)
         {
-            stopwatch.Stop();
-            try
-            {
-                if (System.IO.File.Exists(finalMessagePath))
-                {
-                    System.IO.File.Delete(finalMessagePath);
-                }
-            }
-            catch
-            {
-            }
+            var rollbackErrors = RollBackArchiveMutation(
+                plan.SourceFolderPath,
+                response.ArchiveFolderPath,
+                moved,
+                originalFileContents);
+
+            var rollbackSummary = rollbackErrors.Count == 0
+                ? " The archive mutation was rolled back."
+                : $" Rollback also failed: {string.Join(" ", rollbackErrors)}";
+
+            return Problem(
+                $"Archive failed before it could complete: {ex.Message}.{rollbackSummary}",
+                statusCode: StatusCodes.Status500InternalServerError);
         }
     }
 
-    private static (bool Success, string? ErrorMessage, CreateProjectPreviewResponse? Response, List<FileWritePlan> FilesToWrite, string RegistryPath) BuildCreateProjectPlan(
+    private static (bool Success, string? ErrorMessage, CreateProjectPreviewResponse? Response, List<FileWritePlan> FilesToWrite, List<string> DirectoriesToCreate, string RegistryPath) BuildCreateProjectPlan(
         string projectName,
-        string? summary)
+        string? summary,
+        string? projectType)
     {
         if (string.IsNullOrWhiteSpace(projectName))
         {
-            return (false, "Project name is required.", null, [], string.Empty);
+            return (false, "Project name is required.", null, [], [], string.Empty);
         }
 
-        var cleanName = projectName.Trim();
+        var projectNameValidation = NormalizeProjectName(projectName);
+        if (!projectNameValidation.Success)
+        {
+            return (false, projectNameValidation.ErrorMessage, null, [], [], string.Empty);
+        }
+
+        var cleanName = projectNameValidation.ProjectName!;
         var created = DateOnly.FromDateTime(DateTime.Today).ToString("yyyy-MM-dd");
         var folderRelativePath = $"40 Agent Nexus/Projects/{cleanName}";
         var folderPath = CombineVaultPath(folderRelativePath);
@@ -564,13 +273,19 @@ public sealed class ActionsController : ControllerBase
 
         if (!System.IO.File.Exists(registryPath))
         {
-            return (false, $"Registry not found: {registryPath}", null, [], registryPath);
+            return (false, $"Registry not found: {registryPath}", null, [], [], registryPath);
         }
 
         var registryContent = System.IO.File.ReadAllText(registryPath);
         if (RegistryContainsProject(registryContent, cleanName))
         {
-            return (false, $"A registry row for '{cleanName}' already exists.", null, [], registryPath);
+            return (false, $"A registry row for '{cleanName}' already exists.", null, [], [], registryPath);
+        }
+
+        var normalizedProjectType = NormalizeProjectType(projectType);
+        if (normalizedProjectType is null)
+        {
+            return (false, $"Unsupported project type '{projectType}'.", null, [], [], registryPath);
         }
 
         var summaryText = string.IsNullOrWhiteSpace(summary)
@@ -585,10 +300,34 @@ public sealed class ActionsController : ControllerBase
             new(CombineVaultPath(folderRelativePath, "Operating Notes.md"), BuildOperatingNotes(cleanName, created)),
         };
 
-        var plannedWrites = new List<PlannedWriteResponse>
+        var directoriesToCreate = new List<string>
         {
-            new(folderPath, Directory.Exists(folderPath)),
+            folderPath,
         };
+
+        if (string.Equals(normalizedProjectType, "Research", StringComparison.Ordinal))
+        {
+            var researchFolderRelativePath = $"20 Library/Research Reports/{cleanName}";
+            var researchFolderPath = CombineVaultPath(researchFolderRelativePath);
+            var sourcesPath = CombineVaultPath(researchFolderRelativePath, "Sources");
+            var researchRunsPath = CombineVaultPath(researchFolderRelativePath, "Research Runs");
+
+            directoriesToCreate.Add(researchFolderPath);
+            directoriesToCreate.Add(sourcesPath);
+            directoriesToCreate.Add(researchRunsPath);
+
+            filesToWrite.Add(new FileWritePlan(
+                CombineVaultPath(researchFolderRelativePath, "Research Brief.md"),
+                BuildResearchBrief(cleanName, created, folderRelativePath, researchFolderRelativePath)));
+            filesToWrite.Add(new FileWritePlan(
+                CombineVaultPath(researchFolderRelativePath, "Process Log.md"),
+                BuildResearchProcessLog(cleanName, created, researchFolderRelativePath)));
+        }
+
+        var plannedWrites = directoriesToCreate
+            .Distinct(StringComparer.Ordinal)
+            .Select(path => new PlannedWriteResponse(path, Directory.Exists(path)))
+            .ToList();
         plannedWrites.AddRange(filesToWrite.Select(file => new PlannedWriteResponse(file.Path, System.IO.File.Exists(file.Path))));
 
         var registryRow = BuildRegistryRow(cleanName, folderRelativePath, created);
@@ -600,7 +339,7 @@ public sealed class ActionsController : ControllerBase
             RegistryRow: registryRow,
             PlannedWrites: plannedWrites);
 
-        return (true, null, response, filesToWrite, registryPath);
+        return (true, null, response, filesToWrite, directoriesToCreate, registryPath);
     }
 
     private static (bool Success, string? ErrorMessage, ActivateSprintPreviewResponse? Response, List<FileWritePlan> FilesToWrite) BuildActivateSprintPlan(
@@ -1258,6 +997,52 @@ public sealed class ActionsController : ControllerBase
                + content[match.Length..];
     }
 
+    private static IReadOnlyList<string> RollBackArchiveMutation(
+        string sourceFolderPath,
+        string archiveFolderPath,
+        bool moved,
+        IReadOnlyDictionary<string, string?> originalFileContents)
+    {
+        var errors = new List<string>();
+
+        if (moved && Directory.Exists(archiveFolderPath) && !Directory.Exists(sourceFolderPath))
+        {
+            try
+            {
+                Directory.Move(archiveFolderPath, sourceFolderPath);
+            }
+            catch (Exception ex)
+            {
+                errors.Add($"Could not move archived folder back to source: {ex.Message}");
+            }
+        }
+
+        foreach (var (path, content) in originalFileContents)
+        {
+            try
+            {
+                if (content is null)
+                {
+                    if (System.IO.File.Exists(path))
+                    {
+                        System.IO.File.Delete(path);
+                    }
+
+                    continue;
+                }
+
+                Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+                System.IO.File.WriteAllText(path, content);
+            }
+            catch (Exception ex)
+            {
+                errors.Add($"Could not restore {path}: {ex.Message}");
+            }
+        }
+
+        return errors;
+    }
+
     private static IReadOnlyList<RegistryRow> ParseRegistryRows(IEnumerable<string> lines)
     {
         var lineList = lines.ToList();
@@ -1307,6 +1092,59 @@ public sealed class ActionsController : ControllerBase
 
     private static string UnwrapCode(string value) => value.Trim().Trim('`');
 
+    private static string? NormalizeProjectType(string? projectType)
+    {
+        if (string.IsNullOrWhiteSpace(projectType))
+        {
+            return "Software development";
+        }
+
+        var normalized = projectType.Trim();
+
+        if (string.Equals(normalized, "Software development", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(normalized, "software-development", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(normalized, "software", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Software development";
+        }
+
+        if (string.Equals(normalized, "Research", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Research";
+        }
+
+        return null;
+    }
+
+    private static (bool Success, string? ProjectName, string? ErrorMessage) NormalizeProjectName(string projectName)
+    {
+        var cleanName = projectName.Trim();
+        if (cleanName is "." or "..")
+        {
+            return (false, null, "Project name cannot be a relative path segment.");
+        }
+
+        var invalidCharacters = new HashSet<char>(Path.GetInvalidFileNameChars())
+        {
+            '/',
+            '\\',
+            '|',
+            '<',
+            '>',
+            ':',
+            '"',
+            '?',
+            '*',
+        };
+
+        if (cleanName.Any(character => char.IsControl(character) || invalidCharacters.Contains(character)))
+        {
+            return (false, null, "Project name cannot contain path separators, markdown table separators, control characters, or characters reserved by common filesystems.");
+        }
+
+        return (true, cleanName, null);
+    }
+
     private static string BuildProjectBrief(string projectName, string created, string summary) => $"---\ntype: \"project\"\nstatus: \"active\"\ncreated: \"{created}\"\nowner: \"johnny-5\"\nscope: \"project-local\"\nproject: \"{projectName}\"\n---\n# Project Brief: {projectName}\n\n## Summary\n{summary}\n\n## Current status\n- Project scaffold created by Mission Control.\n- Local project boards now exist and are ready for the first planning pass.\n\n## Immediate next move\nAdd the first real backlog item or kickoff note, then begin using the local Kanban as the execution surface.\n\n#{ToTag(projectName)} #project #workflow #product\n";
 
     private static string BuildProjectBacklog(string projectName, string created) => $"---\ntype: \"project\"\nstatus: \"active\"\ncreated: \"{created}\"\nowner: \"johnny-5\"\nscope: \"project-local\"\nproject: \"{projectName}\"\n---\n# Project Backlog: {projectName}\n\n## Purpose\nOrdered list of project-local outcomes that are not yet active on the project Kanban.\n\n## Priority rules\n- Higher in the file means higher priority.\n- Keep items outcome-focused.\n- Use `Not before: YYYY-MM-DD` and `Trigger:` only when gating is real.\n- Once a card is pulled into the project Kanban, delete it from this backlog immediately.\n- The eventual project session should be the normal writer for this board.\n\n## Backlog\n\n_None._\n\n#{ToTag(projectName)} #project #workflow #backlog\n";
@@ -1314,6 +1152,184 @@ public sealed class ActionsController : ControllerBase
     private static string BuildProjectKanban(string projectName, string created) => $"---\ntype: \"project\"\nstatus: \"active\"\ncreated: \"{created}\"\nowner: \"johnny-5\"\nscope: \"project-local\"\nproject: \"{projectName}\"\n---\n# Project Kanban: {projectName}\n\n## Purpose\nExecution board for active {projectName} work.\n\n## Operating rules\n- The eventual project session should be the normal writer for this board.\n- Read `Doing` first, then `Ready`. Read the local backlog only during explicit sprint fill or board reconciliation.\n- `Ready` is the current sprint queue. Do not just-in-time pull the next backlog item during normal execution.\n- Keep `Doing` limited to 1 to 3 items total.\n- Move blocked work to `Blocked` with a concrete blocker.\n- Keep project context notes separate from the execution board.\n\n## Visual board view\n\n```dataviewjs\nconst file = app.vault.getAbstractFileByPath(dv.current().file.path);\n\nif (!file) {{\n  dv.paragraph(\"*Could not read this Kanban file.*\");\n}} else {{\n  const content = await app.vault.cachedRead(file);\n  const laneOrder = [\"Ready\", \"Doing\", \"Blocked\", \"Done\"];\n\n  const escapeHtml = (value) => String(value)\n    .replace(/&/g, \"&amp;\")\n    .replace(/</g, \"&lt;\")\n    .replace(/>/g, \"&gt;\")\n    .replace(/\\\"/g, \"&quot;\")\n    .replace(/'/g, \"&#39;\");\n\n  function parseLaneBodies(source) {{\n    const headingRe = /^## (Ready|Doing|Blocked|Done)$/gm;\n    const matches = [...source.matchAll(headingRe)];\n    const sections = {{}};\n\n    matches.forEach((match, index) => {{\n      const lane = match[1];\n      const start = match.index + match[0].length;\n      const end = index + 1 < matches.length ? matches[index + 1].index : source.length;\n      sections[lane] = source.slice(start, end).trim();\n    }});\n\n    return sections;\n  }}\n\n  function extractCards(body) {{\n    if (!body || body === \"_None._\") return [];\n    return [...body.matchAll(/^###\\s+(.+)$/gm)].map((match) => {{\n      const heading = match[1].trim();\n      const comma = heading.indexOf(\",\");\n      return {{\n        id: comma >= 0 ? heading.slice(0, comma).trim() : heading,\n        title: comma >= 0 ? heading.slice(comma + 1).trim() : \"\"\n      }};\n    }});\n  }}\n\n  const laneBodies = parseLaneBodies(content);\n  const lanes = laneOrder\n    .map((name) => ({{ name, cards: extractCards(laneBodies[name] ?? \"\") }}))\n    .filter((lane) => lane.cards.length > 0);\n\n  const wrapper = dv.el(\"div\", \"\", {{ cls: \"generated-kanban-root\" }});\n\n  if (!lanes.length) {{\n    wrapper.innerHTML = `<div class=\"generated-kanban-empty\"><em>No cards yet.</em></div>`;\n  }} else {{\n    wrapper.innerHTML = `\n      <style>\n        .generated-kanban-root {{\n          margin: 8px 0 18px;\n        }}\n        .generated-kanban {{\n          display: grid;\n          grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));\n          gap: 14px;\n          align-items: start;\n        }}\n        .generated-kanban-lane {{\n          border: 1px solid var(--background-modifier-border);\n          border-top-width: 3px;\n          border-radius: 14px;\n          background: var(--background-secondary);\n          overflow: hidden;\n          box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);\n        }}\n        .generated-kanban-lane[data-lane=\"Ready\"] {{\n          border-top-color: var(--color-blue, #4f8cff);\n        }}\n        .generated-kanban-lane[data-lane=\"Doing\"] {{\n          border-top-color: var(--color-orange, #d68b2c);\n        }}\n        .generated-kanban-lane[data-lane=\"Blocked\"] {{\n          border-top-color: var(--color-red, #d14b4b);\n        }}\n        .generated-kanban-lane[data-lane=\"Done\"] {{\n          border-top-color: var(--color-green, #3aa675);\n        }}\n        .generated-kanban-lane-header {{\n          display: flex;\n          align-items: center;\n          justify-content: space-between;\n          gap: 8px;\n          padding: 10px 12px;\n          background: var(--background-primary);\n          border-bottom: 1px solid var(--background-modifier-border);\n        }}\n        .generated-kanban-lane-title {{\n          margin: 0;\n          font-size: 0.95em;\n          font-weight: 700;\n          letter-spacing: 0.01em;\n        }}\n        .generated-kanban-lane-count {{\n          font-size: 0.75em;\n          color: var(--text-muted);\n          background: var(--background-modifier-hover);\n          border: 1px solid var(--background-modifier-border);\n          border-radius: 999px;\n          padding: 2px 8px;\n          white-space: nowrap;\n        }}\n        .generated-kanban-card-list {{\n          display: grid;\n          gap: 8px;\n          padding: 12px;\n          max-height: 420px;\n          overflow: auto;\n        }}\n        .generated-kanban-card {{\n          border: 1px solid var(--background-modifier-border);\n          border-radius: 12px;\n          background: var(--background-primary);\n          padding: 9px 10px;\n        }}\n        .generated-kanban-card-id {{\n          font-size: 0.78em;\n          font-weight: 700;\n          color: var(--text-muted);\n          letter-spacing: 0.02em;\n        }}\n        .generated-kanban-card-title {{\n          margin-top: 4px;\n          line-height: 1.35;\n        }}\n        .generated-kanban-empty {{\n          color: var(--text-muted);\n          margin: 8px 0 16px;\n        }}\n        @media (max-width: 720px) {{\n          .generated-kanban {{\n            grid-template-columns: 1fr;\n          }}\n          .generated-kanban-card-list {{\n            max-height: none;\n          }}\n        }}\n      </style>\n      <div class=\"generated-kanban\">\n        ${'{'}lanes.map((lane) => {{\n          const countLabel = lane.cards.length === 1 ? \"1 card\" : `${'{'}lane.cards.length{'}'} cards`;\n          return `\n            <section class=\"generated-kanban-lane\" data-lane=\"${'{'}escapeHtml(lane.name){'}'}\">\n              <div class=\"generated-kanban-lane-header\">\n                <div class=\"generated-kanban-lane-title\">${'{'}escapeHtml(lane.name){'}'}</div>\n                <div class=\"generated-kanban-lane-count\">${'{'}countLabel{'}'}</div>\n              </div>\n              <div class=\"generated-kanban-card-list\">\n                ${'{'}lane.cards.map((card) => `\n                  <article class=\"generated-kanban-card\">\n                    <div class=\"generated-kanban-card-id\">${'{'}escapeHtml(card.id){'}'}</div>\n                    <div class=\"generated-kanban-card-title\">${'{'}escapeHtml(card.title){'}'}</div>\n                  </article>\n                `).join(\"\"){'}'}\n              </div>\n            </section>\n          `;\n        }}).join(\"\"){'}'}\n      </div>\n    `;\n  }}\n}}\n```\n\n## Ready\n\n_None._\n\n## Doing\n\n_None._\n\n## Blocked\n\n_None._\n\n## Done\n\n_None._\n\n#{ToTag(projectName)} #project #workflow #kanban\n";
 
     private static string BuildOperatingNotes(string projectName, string created) => $"---\ntype: \"project-note\"\nstatus: \"active\"\ncreated: \"{created}\"\nproject: \"{projectName}\"\n---\n# Operating Notes: {projectName}\n\n## Guardrails\n- Obsidian remains the source of truth for backlog, decisions, and planning.\n- Keep side effects explicit and legible before execution.\n- Prefer local project boards for execution detail.\n\n## Early implementation posture\n- Start with one small useful slice.\n- Keep project-local markdown human-readable.\n- Promote reusable rules out of the project once they stabilize.\n\n## Operational note\n- Add the project session or thread here once routing is established.\n\n#{ToTag(projectName)} #ops #workflow #notes\n";
+
+
+    private static string BuildResearchBrief(string projectName, string created, string projectFolderRelativePath, string researchFolderRelativePath) => $$"""
+---
+type: "research-brief"
+status: "draft"
+created: "{{created}}"
+project: "{{projectName}}"
+---
+# Research Brief: {{projectName}}
+
+Use this note as the mandatory preflight artifact before the first real external research run.
+
+## Brief status
+- Project: {{projectName}}
+- Brief owner: johnny-5
+- Date: {{created}}
+- Chosen mode: Mode 3
+- Mode rationale: This project was explicitly created as a research track. Update this if the first real run needs a narrower mode.
+- Status: draft
+- Related project brief: ../../../{{projectFolderRelativePath}}/Project Brief.md
+
+## 1. Research question
+-
+
+## 2. Why this matters now
+-
+
+## 3. Required output
+-
+
+## 4. Bounded scope
+### In scope
+-
+
+### Out of scope
+-
+
+### Stop condition
+-
+
+## 5. Downstream destination
+- Project folder: /{{projectFolderRelativePath}}/
+- Run summary destination: /{{researchFolderRelativePath}}/Research Runs/
+- Process log destination: /{{researchFolderRelativePath}}/Process Log.md
+- Source capture destination: /{{researchFolderRelativePath}}/Sources/
+- Dossier destination, if needed: create later only if recurrence becomes real
+
+## 6. Evaluation priorities
+- Citation quality: high
+- Coverage: medium
+- Freshness: medium
+- Hallucination resistance: high
+- Boundedness and cost: medium
+- Inspectability: high
+
+## 7. Allowed source surfaces
+- Local notes / existing dossiers:
+- Public web:
+- Public X:
+- GitHub:
+- Specialized tools worth checking from `Research Tool Reference.md`:
+
+## 8. Access and risk boundaries
+- External read-only research approved: record before first run
+- Known cost sensitivity:
+- Known legal / ToS sensitivity:
+- Known prompt-injection or hostile-content risk:
+
+## 9. Local-first grounding check
+- Existing project notes reviewed:
+- Existing dossiers reviewed:
+- Existing run summaries reviewed:
+- Why a new run is still needed:
+
+## 10. Initial plan and refinement budget
+- Initial source batch:
+- Expected first-pass output:
+- Likely refinement axes or taxonomy splits to watch for:
+- Expected follow-up trigger, if any:
+- Cycle budget: up to 5 total cycles if the work keeps earning another pass
+
+## 11. Run-readiness gate check
+- Question clarity:
+- Local-first grounding:
+- Process-log readiness:
+- Supported-access check:
+- Provenance readiness:
+- Approval and risk check:
+- Boundedness check:
+- Mode 3 refinement plan, if applicable:
+
+## 12. Known blockers or open questions
+-
+
+## 13. Approval note
+Record the explicit approval state for external read-only research here.
+
+## 14. Handoff note to research execution
+Summarize the run in 3 to 6 lines so a fresh agent can start cleanly.
+
+#research #brief #{{ToTag(projectName)}}
+""";
+
+    private static string BuildResearchProcessLog(string projectName, string created, string researchFolderRelativePath) => $$"""
+---
+type: "research-process-log"
+status: "draft"
+created: "{{created}}"
+project: "{{projectName}}"
+---
+# Process Log: {{projectName}}
+
+Use this note to leave a lightweight trace of landing-zone setup, local-first grounding, external collection order, and closeout checks.
+
+## Process log status
+- Project: {{projectName}}
+- Run:
+- Logged by: johnny-5
+- Date: {{created}}
+- Related brief: /{{researchFolderRelativePath}}/Research Brief.md
+- Related run summary:
+
+## Entries
+
+### 00. Mode decision
+- Time or sequence: scaffold
+- Chosen mode: Mode 3
+- Why this mode fits: This project was created as a dedicated research track. Confirm or narrow this before the first real run.
+
+### 01. Landing zone created or confirmed
+- Time or sequence: scaffold
+- Folder used: /{{researchFolderRelativePath}}/
+- Brief path: /{{researchFolderRelativePath}}/Research Brief.md
+- Process log path: /{{researchFolderRelativePath}}/Process Log.md
+- Sources path: /{{researchFolderRelativePath}}/Sources/
+- Research Runs path: /{{researchFolderRelativePath}}/Research Runs/
+- Dossiers path, if any: create later only if recurrence becomes real
+
+### 02. Brief preflight completed
+- Time or sequence:
+- Question locked:
+- Required output locked:
+- Approval state recorded:
+- Stop condition recorded:
+
+### 03. Local-first grounding completed
+- Time or sequence:
+- Project notes checked:
+- Dossiers checked:
+- Prior run summaries checked:
+- Why external research is still needed:
+
+### 04. First external batch started
+- Time or sequence:
+- Planned source batch:
+- Named gap each source is meant to answer:
+- Confirmation that no earlier external source was inspected before steps 01 to 03:
+
+### 05. Refinement cycle, repeat as needed
+- Time or sequence:
+- What was learned in the prior cycle:
+- Refinement goal or gap being pursued next:
+- How the search pattern improves on the prior one:
+- New source surface or query pattern:
+- New sources added:
+
+### 06. Closeout compliance check
+- Time or sequence:
+- One source-capture note per meaningful new external source: pass | fail
+- Run summary exists: pass | fail
+- Local-first grounding documented: pass | fail
+- Source trail recoverable: pass | fail
+- Open questions or blockers explicit: pass | fail
+- Final outcome:
+
+#research #process-log #{{ToTag(projectName)}}
+""";
 
     private static string BuildRegistryRow(string projectName, string folderRelativePath, string created)
     {
@@ -1362,69 +1378,6 @@ public sealed class ActionsController : ControllerBase
 
     private static string ToTag(string projectName) =>
         Regex.Replace(projectName.Trim().ToLowerInvariant(), @"[^a-z0-9]+", "-").Trim('-');
-
-    private static string? ResolveRepoPath(string projectName)
-    {
-        var slug = ToTag(projectName);
-
-        if (string.IsNullOrWhiteSpace(slug))
-        {
-            return null;
-        }
-
-        var repoPath = Path.Combine(ReposRoot, slug);
-        return Directory.Exists(repoPath) ? repoPath : null;
-    }
-
-    private static async Task<ActionCommandResult> RunCommand(
-        string workingDirectory,
-        string command,
-        CancellationToken cancellationToken)
-    {
-        var output = new StringBuilder();
-        var stopwatch = Stopwatch.StartNew();
-
-        using var process = new Process
-        {
-            StartInfo = new ProcessStartInfo
-            {
-                FileName = "/usr/bin/env",
-                ArgumentList = { "bash", "-lc", command },
-                WorkingDirectory = workingDirectory,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-            },
-        };
-
-        process.OutputDataReceived += (_, args) =>
-        {
-            if (args.Data is not null)
-            {
-                output.AppendLine(args.Data);
-            }
-        };
-        process.ErrorDataReceived += (_, args) =>
-        {
-            if (args.Data is not null)
-            {
-                output.AppendLine(args.Data);
-            }
-        };
-
-        process.Start();
-        process.BeginOutputReadLine();
-        process.BeginErrorReadLine();
-        await process.WaitForExitAsync(cancellationToken);
-        stopwatch.Stop();
-
-        return new ActionCommandResult(
-            Command: command,
-            ExitCode: process.ExitCode,
-            DurationMs: stopwatch.ElapsedMilliseconds,
-            Output: output.ToString().Trim(),
-            Success: process.ExitCode == 0);
-    }
 
     private static string CombineVaultPath(params string[] relativeParts)
     {
