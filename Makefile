@@ -39,6 +39,7 @@ lint:
 
 test:
 	@$(DOTNET) test MissionControl.sln
+	@$(NPM) --prefix frontend run test
 
 typecheck:
 	@$(NPM) --prefix frontend run typecheck

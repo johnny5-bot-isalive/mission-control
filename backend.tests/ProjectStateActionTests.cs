@@ -1,3 +1,4 @@
+using System.Net;
 using System.Net.Http.Json;
 using Microsoft.AspNetCore.Mvc.Testing;
 
@@ -73,5 +74,35 @@ public class ProjectStateActionTests : IClassFixture<WebApplicationFactory<Progr
         var projects = await client.GetFromJsonAsync<List<ProjectSummaryResponse>>("/api/projects");
         Assert.NotNull(projects);
         Assert.Empty(projects!);
+    }
+
+    [Fact]
+    public async Task ArchiveProject_RollsBackRegistryAndFrontmatter_WhenFolderMoveFails()
+    {
+        using var scope = new MissionControlTestScope();
+        var project = scope.SeedProject("Archive Rollback Validation", status: "inactive", cadence: "manual");
+        scope.WriteRegistry([project], ["Archive Rollback Validation should stay in the registry."]);
+
+        var projectFolder = Path.Combine(scope.VaultRoot, project.FolderRelativePath.Replace('/', Path.DirectorySeparatorChar));
+        var briefPath = Path.Combine(projectFolder, "Project Brief.md");
+        var originalRegistryContent = await File.ReadAllTextAsync(scope.RegistryPath);
+        var originalBriefContent = await File.ReadAllTextAsync(briefPath);
+
+        var archiveFolder = Path.Combine(scope.VaultRoot, "99 Archive", "Project Archive", project.Name);
+        Directory.CreateDirectory(Path.GetDirectoryName(archiveFolder)!);
+        await File.WriteAllTextAsync(archiveFolder, "blocking file");
+
+        using var client = _factory.CreateClient();
+        var executeResponse = await client.PostAsJsonAsync("/api/actions/archive-project", new ArchiveProjectRequest(project.Name));
+
+        Assert.Equal(HttpStatusCode.InternalServerError, executeResponse.StatusCode);
+        Assert.True(Directory.Exists(projectFolder));
+        Assert.False(Directory.Exists(archiveFolder));
+        Assert.True(File.Exists(archiveFolder));
+
+        var registryContent = await File.ReadAllTextAsync(scope.RegistryPath);
+        var briefContent = await File.ReadAllTextAsync(briefPath);
+        Assert.Equal(originalRegistryContent, registryContent);
+        Assert.Equal(originalBriefContent, briefContent);
     }
 }
