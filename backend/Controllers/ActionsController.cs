@@ -71,7 +71,7 @@ public sealed class ActionsController : ControllerBase
     /// Previews the markdown files and registry row that would be created for a new project.
     /// </summary>
     [HttpPost("create-project/preview")]
-    [SwaggerOperationAttribute(Summary = "Previews the markdown files and registry row that would be created for a new project.")]
+    [SwaggerOperation(Summary = "Previews the markdown files and registry row that would be created for a new project.")]
     public ActionResult<CreateProjectPreviewResponse> PreviewCreateProject(
         [FromBody] CreateProjectRequest request)
     {
@@ -88,7 +88,7 @@ public sealed class ActionsController : ControllerBase
     /// Creates a new project folder, starter markdown files, and registry row using the settled Mission Control contract.
     /// </summary>
     [HttpPost("create-project")]
-    [SwaggerOperationAttribute(Summary = "Creates a new project folder, starter markdown files, and registry row using the settled Mission Control contract.")]
+    [SwaggerOperation(Summary = "Creates a new project folder, starter markdown files, and registry row using the settled Mission Control contract.")]
     public ActionResult<CreateProjectPreviewResponse> CreateProject(
         [FromBody] CreateProjectRequest request)
     {
@@ -123,7 +123,7 @@ public sealed class ActionsController : ControllerBase
     /// Previews which backlog cards are eligible to move into the active sprint and which markdown files would change.
     /// </summary>
     [HttpPost("activate-sprint/preview")]
-    [SwaggerOperationAttribute(Summary = "Previews which backlog cards are eligible to move into the active sprint and which markdown files would change.")]
+    [SwaggerOperation(Summary = "Previews which backlog cards are eligible to move into the active sprint and which markdown files would change.")]
     public ActionResult<ActivateSprintPreviewResponse> PreviewActivateSprint(
         [FromBody] ActivateSprintRequest request)
     {
@@ -140,7 +140,7 @@ public sealed class ActionsController : ControllerBase
     /// Moves eligible backlog cards into the sprint-ready lane and applies the related markdown updates.
     /// </summary>
     [HttpPost("activate-sprint")]
-    [SwaggerOperationAttribute(Summary = "Moves eligible backlog cards into the sprint-ready lane and applies the related markdown updates.")]
+    [SwaggerOperation(Summary = "Moves eligible backlog cards into the sprint-ready lane and applies the related markdown updates.")]
     public ActionResult<ActivateSprintPreviewResponse> ActivateSprint(
         [FromBody] ActivateSprintRequest request)
     {
@@ -162,7 +162,7 @@ public sealed class ActionsController : ControllerBase
     /// Toggles a project between active and inactive, updating the registry and project-local status frontmatter.
     /// </summary>
     [HttpPost("set-project-active-state")]
-    [SwaggerOperationAttribute(Summary = "Toggles a project between active and inactive, updating the registry and project-local status frontmatter.")]
+    [SwaggerOperation(Summary = "Toggles a project between active and inactive, updating the registry and project-local status frontmatter.")]
     public ActionResult<SetProjectActiveStateResponse> SetProjectActiveState(
         [FromBody] SetProjectActiveStateRequest request)
     {
@@ -184,7 +184,7 @@ public sealed class ActionsController : ControllerBase
     /// Previews the registry cleanup and folder move that would archive a project.
     /// </summary>
     [HttpPost("archive-project/preview")]
-    [SwaggerOperationAttribute(Summary = "Previews the registry cleanup and folder move that would archive a project.")]
+    [SwaggerOperation(Summary = "Previews the registry cleanup and folder move that would archive a project.")]
     public ActionResult<ArchiveProjectPreviewResponse> PreviewArchiveProject(
         [FromBody] ArchiveProjectRequest request)
     {
@@ -201,7 +201,7 @@ public sealed class ActionsController : ControllerBase
     /// Archives a project by removing its live registry entry, updating markdown state, and moving the folder into the archive area.
     /// </summary>
     [HttpPost("archive-project")]
-    [SwaggerOperationAttribute(Summary = "Archives a project by removing its live registry entry, updating markdown state, and moving the folder into the archive area.")]
+    [SwaggerOperation(Summary = "Archives a project by removing its live registry entry, updating markdown state, and moving the folder into the archive area.")]
     public ActionResult<ArchiveProjectPreviewResponse> ArchiveProject(
         [FromBody] ArchiveProjectRequest request)
     {
