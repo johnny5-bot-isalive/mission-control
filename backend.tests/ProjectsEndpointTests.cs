@@ -36,5 +36,10 @@ public class ProjectsEndpointTests : IClassFixture<WebApplicationFactory<Program
         Assert.Contains(activeProject.Links, link => link.Label == "Kanban");
         Assert.Contains(activeProject.Links, link => link.Label == "Backlog");
         Assert.Contains(activeProject.Links, link => link.Label == "PRD");
+
+        var backlogLink = activeProject.Links.Single(link => link.Label == "Backlog");
+        Assert.Equal(
+            "obsidian://open?vault=The%20Nexus&file=40%20Agent%20Nexus%2FProjects%2FActive%20Project%2FProject%20Backlog.md",
+            backlogLink.Url);
     }
 }

@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
+using Swashbuckle.AspNetCore.Annotations;
 
 namespace backend.Controllers;
 
@@ -16,6 +17,7 @@ public class StatusController : ControllerBase
     /// Returns a lightweight health snapshot for the Mission Control API.
     /// </summary>
     [HttpGet]
+    [SwaggerOperation(Summary = "Returns a lightweight health snapshot for the Mission Control API.")]
     public ActionResult<ApiStatusResponse> Get()
     {
         return Ok(new ApiStatusResponse(

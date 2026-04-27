@@ -75,6 +75,7 @@ main {
 .page-header {
   display: flex;
   align-items: flex-start;
+  justify-content: space-between;
   gap: 1rem;
 }
 
@@ -99,6 +100,52 @@ h2 {
 h3 {
   font-size: 1rem;
   line-height: 1.2;
+}
+
+.header-copy,
+.workspace-note,
+.muted-note {
+  margin-top: 0.45rem;
+  color: #b8c2cf;
+  line-height: 1.5;
+}
+
+.page-nav,
+.type-selector {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+}
+
+.page-nav {
+  justify-content: flex-end;
+}
+
+.page-nav-button,
+.type-option {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.48rem 0.74rem;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(36, 39, 45, 0.94);
+  color: #cbd5e1;
+  cursor: pointer;
+  transition: transform 140ms ease, border-color 140ms ease, background 140ms ease, color 140ms ease;
+}
+
+.page-nav-button.active,
+.type-option.active {
+  background: rgba(58, 63, 72, 0.98);
+  border-color: rgba(255, 255, 255, 0.2);
+  color: #f3f4f6;
+}
+
+.page-nav-button:hover,
+.type-option:hover {
+  transform: translateY(-1px);
+  border-color: rgba(255, 255, 255, 0.18);
 }
 
 .meta-chip {
@@ -419,6 +466,8 @@ h3 {
 .danger-button:focus-visible,
 .select-card-button:focus-visible,
 .project-state-toggle:focus-visible,
+.page-nav-button:focus-visible,
+.type-option:focus-visible,
 input:focus,
 textarea:focus {
   outline: none;
@@ -707,6 +756,14 @@ textarea:focus {
 }
 
 @media (max-width: 720px) {
+  .page-header {
+    flex-direction: column;
+  }
+
+  .page-nav {
+    justify-content: flex-start;
+  }
+
   .app-shell {
     width: min(100%, calc(100% - 1rem));
     padding-top: 0.75rem;

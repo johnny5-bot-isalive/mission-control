@@ -28,8 +28,10 @@ public class CreateProjectActionTests : IClassFixture<WebApplicationFactory<Prog
         Assert.NotNull(payload);
         Assert.Equal("Create Preview Validation", payload!.ProjectName);
         Assert.Contains("Create Preview Validation", payload.RegistryRow);
-        Assert.Equal(5, payload.PlannedWrites.Count);
-        Assert.All(payload.PlannedWrites, write => Assert.False(write.Exists));
+        Assert.Equal(7, payload.PlannedWrites.Count);
+        Assert.Equal(5, payload.PlannedWrites.Count(write => !write.Exists));
+        Assert.Contains(payload.PlannedWrites, write => write.Path == scope.RegistryPath && write.Exists);
+        Assert.Contains(payload.PlannedWrites, write => write.Path == scope.KanbanIndexPath && write.Exists);
     }
 
     [Fact]
@@ -54,6 +56,11 @@ public class CreateProjectActionTests : IClassFixture<WebApplicationFactory<Prog
         var registryContent = await File.ReadAllTextAsync(scope.RegistryPath);
         Assert.Contains("Create Execute Validation", registryContent);
 
+        var kanbanIndexContent = await File.ReadAllTextAsync(scope.KanbanIndexPath);
+        Assert.Contains("[[Projects/Create Execute Validation/Project Kanban|Create Execute Validation Kanban]]", kanbanIndexContent);
+        Assert.Contains("[[Projects/Create Execute Validation/Project Backlog|Create Execute Validation Backlog]]", kanbanIndexContent);
+        Assert.Contains("{ label: \"Create Execute Validation\", path: \"40 Agent Nexus/Projects/Create Execute Validation/Project Kanban.md\" },", kanbanIndexContent);
+
         var projects = await client.GetFromJsonAsync<List<ProjectSummaryResponse>>("/api/projects");
         Assert.Contains(projects!, project => project.Name == "Create Execute Validation");
     }
@@ -74,13 +81,15 @@ public class CreateProjectActionTests : IClassFixture<WebApplicationFactory<Prog
 
         Assert.NotNull(payload);
         Assert.Equal("Research Preview Validation", payload!.ProjectName);
-        Assert.Equal(10, payload.PlannedWrites.Count);
+        Assert.Equal(12, payload.PlannedWrites.Count);
+        Assert.Contains(payload.PlannedWrites, write => write.Path == scope.RegistryPath && write.Exists);
+        Assert.Contains(payload.PlannedWrites, write => write.Path == scope.KanbanIndexPath && write.Exists);
         Assert.Contains(payload.PlannedWrites, write => write.Path.EndsWith("20 Library/Research Reports/Research Preview Validation", StringComparison.Ordinal));
         Assert.Contains(payload.PlannedWrites, write => write.Path.EndsWith("20 Library/Research Reports/Research Preview Validation/Research Brief.md", StringComparison.Ordinal));
         Assert.Contains(payload.PlannedWrites, write => write.Path.EndsWith("20 Library/Research Reports/Research Preview Validation/Process Log.md", StringComparison.Ordinal));
         Assert.Contains(payload.PlannedWrites, write => write.Path.EndsWith("20 Library/Research Reports/Research Preview Validation/Sources", StringComparison.Ordinal));
         Assert.Contains(payload.PlannedWrites, write => write.Path.EndsWith("20 Library/Research Reports/Research Preview Validation/Research Runs", StringComparison.Ordinal));
-        Assert.All(payload.PlannedWrites, write => Assert.False(write.Exists));
+        Assert.Equal(10, payload.PlannedWrites.Count(write => !write.Exists));
     }
 
     [Fact]

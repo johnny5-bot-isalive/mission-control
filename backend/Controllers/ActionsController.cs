@@ -63,6 +63,9 @@ public sealed class ActionsController : ControllerBase
 {
     private const string DefaultVaultRoot = "/mnt/c/Users/Jaret/Obsidian/The Nexus";
     private const string RegistryRelativePath = "40 Agent Nexus/Project Registry.md";
+    private const string KanbanIndexRelativePath = "40 Agent Nexus/Kanban Index.md";
+    private const string RegistryDirectoryRelativePath = "40 Agent Nexus";
+    private static readonly Regex MarkdownLinkRegex = new(@"^\[(?<text>.+)\]\((?<target>[^)]+)\)$", RegexOptions.Compiled);
 
     private static string VaultRoot =>
         Environment.GetEnvironmentVariable("MISSION_CONTROL_VAULT_ROOT") ?? DefaultVaultRoot;
@@ -99,7 +102,7 @@ public sealed class ActionsController : ControllerBase
         }
 
         var response = plan.Response!;
-        if (response.PlannedWrites.Any(write => write.Exists))
+        if (plan.DirectoriesToCreate.Any(Directory.Exists) || plan.FilesToCreate.Any(file => System.IO.File.Exists(file.Path)))
         {
             return BadRequest("One or more target files already exist. Review the preview before trying again.");
         }
@@ -109,13 +112,12 @@ public sealed class ActionsController : ControllerBase
             Directory.CreateDirectory(directory);
         }
 
-        foreach (var file in plan.FilesToWrite)
+        foreach (var file in plan.FilesToCreate.Concat(plan.FilesToUpdate))
         {
             Directory.CreateDirectory(Path.GetDirectoryName(file.Path)!);
             System.IO.File.WriteAllText(file.Path, file.Content);
         }
 
-        AppendRegistryRow(plan.RegistryPath, response.RegistryRow);
         return Ok(response);
     }
 
@@ -216,8 +218,6 @@ public sealed class ActionsController : ControllerBase
             file => file.Path,
             file => System.IO.File.Exists(file.Path) ? System.IO.File.ReadAllText(file.Path) : null,
             StringComparer.Ordinal);
-        var moved = false;
-
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(response.ArchiveFolderPath)!);
@@ -227,8 +227,7 @@ public sealed class ActionsController : ControllerBase
                 System.IO.File.WriteAllText(file.Path, file.Content);
             }
 
-            Directory.Move(plan.SourceFolderPath, response.ArchiveFolderPath);
-            moved = true;
+            ArchiveProjectFolder(plan.SourceFolderPath, response.ArchiveFolderPath);
             return Ok(response);
         }
         catch (Exception ex)
@@ -236,7 +235,6 @@ public sealed class ActionsController : ControllerBase
             var rollbackErrors = RollBackArchiveMutation(
                 plan.SourceFolderPath,
                 response.ArchiveFolderPath,
-                moved,
                 originalFileContents);
 
             var rollbackSummary = rollbackErrors.Count == 0
@@ -249,20 +247,20 @@ public sealed class ActionsController : ControllerBase
         }
     }
 
-    private static (bool Success, string? ErrorMessage, CreateProjectPreviewResponse? Response, List<FileWritePlan> FilesToWrite, List<string> DirectoriesToCreate, string RegistryPath) BuildCreateProjectPlan(
+    private static (bool Success, string? ErrorMessage, CreateProjectPreviewResponse? Response, List<FileWritePlan> FilesToCreate, List<FileWritePlan> FilesToUpdate, List<string> DirectoriesToCreate) BuildCreateProjectPlan(
         string projectName,
         string? summary,
         string? projectType)
     {
         if (string.IsNullOrWhiteSpace(projectName))
         {
-            return (false, "Project name is required.", null, [], [], string.Empty);
+            return (false, "Project name is required.", null, [], [], []);
         }
 
         var projectNameValidation = NormalizeProjectName(projectName);
         if (!projectNameValidation.Success)
         {
-            return (false, projectNameValidation.ErrorMessage, null, [], [], string.Empty);
+            return (false, projectNameValidation.ErrorMessage, null, [], [], []);
         }
 
         var cleanName = projectNameValidation.ProjectName!;
@@ -270,29 +268,35 @@ public sealed class ActionsController : ControllerBase
         var folderRelativePath = $"40 Agent Nexus/Projects/{cleanName}";
         var folderPath = CombineVaultPath(folderRelativePath);
         var registryPath = CombineVaultPath(RegistryRelativePath);
+        var kanbanIndexPath = CombineVaultPath(KanbanIndexRelativePath);
 
         if (!System.IO.File.Exists(registryPath))
         {
-            return (false, $"Registry not found: {registryPath}", null, [], [], registryPath);
+            return (false, $"Registry not found: {registryPath}", null, [], [], []);
+        }
+
+        if (!System.IO.File.Exists(kanbanIndexPath))
+        {
+            return (false, $"Kanban Index not found: {kanbanIndexPath}", null, [], [], []);
         }
 
         var registryContent = System.IO.File.ReadAllText(registryPath);
         if (RegistryContainsProject(registryContent, cleanName))
         {
-            return (false, $"A registry row for '{cleanName}' already exists.", null, [], [], registryPath);
+            return (false, $"A registry row for '{cleanName}' already exists.", null, [], [], []);
         }
 
         var normalizedProjectType = NormalizeProjectType(projectType);
         if (normalizedProjectType is null)
         {
-            return (false, $"Unsupported project type '{projectType}'.", null, [], [], registryPath);
+            return (false, $"Unsupported project type '{projectType}'.", null, [], [], []);
         }
 
         var summaryText = string.IsNullOrWhiteSpace(summary)
             ? "Add a project summary during the first planning pass."
             : summary.Trim();
 
-        var filesToWrite = new List<FileWritePlan>
+        var filesToCreate = new List<FileWritePlan>
         {
             new(CombineVaultPath(folderRelativePath, "Project Brief.md"), BuildProjectBrief(cleanName, created, summaryText)),
             new(CombineVaultPath(folderRelativePath, "Project Backlog.md"), BuildProjectBacklog(cleanName, created)),
@@ -316,21 +320,39 @@ public sealed class ActionsController : ControllerBase
             directoriesToCreate.Add(sourcesPath);
             directoriesToCreate.Add(researchRunsPath);
 
-            filesToWrite.Add(new FileWritePlan(
+            filesToCreate.Add(new FileWritePlan(
                 CombineVaultPath(researchFolderRelativePath, "Research Brief.md"),
                 BuildResearchBrief(cleanName, created, folderRelativePath, researchFolderRelativePath)));
-            filesToWrite.Add(new FileWritePlan(
+            filesToCreate.Add(new FileWritePlan(
                 CombineVaultPath(researchFolderRelativePath, "Process Log.md"),
                 BuildResearchProcessLog(cleanName, created, researchFolderRelativePath)));
         }
+
+        var registryRow = BuildRegistryRow(cleanName, folderRelativePath, created);
+        var kanbanIndexContent = System.IO.File.ReadAllText(kanbanIndexPath);
+
+        string updatedKanbanIndexContent;
+        try
+        {
+            updatedKanbanIndexContent = BuildUpdatedKanbanIndexContent(kanbanIndexContent, cleanName);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return (false, $"Kanban Index is malformed: {ex.Message}", null, [], [], []);
+        }
+
+        var filesToUpdate = new List<FileWritePlan>
+        {
+            new(registryPath, BuildUpdatedRegistryContent(registryContent, registryRow)),
+            new(kanbanIndexPath, updatedKanbanIndexContent),
+        };
 
         var plannedWrites = directoriesToCreate
             .Distinct(StringComparer.Ordinal)
             .Select(path => new PlannedWriteResponse(path, Directory.Exists(path)))
             .ToList();
-        plannedWrites.AddRange(filesToWrite.Select(file => new PlannedWriteResponse(file.Path, System.IO.File.Exists(file.Path))));
-
-        var registryRow = BuildRegistryRow(cleanName, folderRelativePath, created);
+        plannedWrites.AddRange(filesToCreate.Select(file => new PlannedWriteResponse(file.Path, System.IO.File.Exists(file.Path))));
+        plannedWrites.AddRange(filesToUpdate.Select(file => new PlannedWriteResponse(file.Path, System.IO.File.Exists(file.Path))));
 
         var response = new CreateProjectPreviewResponse(
             ProjectName: cleanName,
@@ -339,7 +361,7 @@ public sealed class ActionsController : ControllerBase
             RegistryRow: registryRow,
             PlannedWrites: plannedWrites);
 
-        return (true, null, response, filesToWrite, directoriesToCreate, registryPath);
+        return (true, null, response, filesToCreate, filesToUpdate, directoriesToCreate);
     }
 
     private static (bool Success, string? ErrorMessage, ActivateSprintPreviewResponse? Response, List<FileWritePlan> FilesToWrite) BuildActivateSprintPlan(
@@ -628,9 +650,26 @@ public sealed class ActionsController : ControllerBase
             return (false, $"Registry row for '{cleanName}' could not be removed.", null, [], sourceFolderPath);
         }
 
+        var kanbanIndexPath = CombineVaultPath(KanbanIndexRelativePath);
+        if (!System.IO.File.Exists(kanbanIndexPath))
+        {
+            return (false, $"Kanban Index not found: {kanbanIndexPath}", null, [], sourceFolderPath);
+        }
+
+        string updatedKanbanIndexContent;
+        try
+        {
+            updatedKanbanIndexContent = BuildArchivedKanbanIndexContent(System.IO.File.ReadAllText(kanbanIndexPath), cleanName);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return (false, $"Kanban Index is malformed: {ex.Message}", null, [], sourceFolderPath);
+        }
+
         var filesToWrite = new List<FileWritePlan>
         {
             new(registryPath, updatedRegistryContent),
+            new(kanbanIndexPath, updatedKanbanIndexContent),
         };
 
         foreach (var notePath in GetProjectStateNotePaths(row.FolderPath))
@@ -649,6 +688,7 @@ public sealed class ActionsController : ControllerBase
         {
             $"Move the project folder from {sourceFolderPath} to {archiveFolderPath}.",
             $"Remove the '{cleanName}' row from {registryPath}.",
+            $"Remove the '{cleanName}' links from {kanbanIndexPath}.",
             "Update project-local note frontmatter status fields to archived before the folder move.",
         };
 
@@ -662,7 +702,7 @@ public sealed class ActionsController : ControllerBase
             SourceFolderPath: sourceFolderPath,
             ArchiveFolderPath: archiveFolderPath,
             RegistryPath: registryPath,
-            Summary: "The project will be archived, removed from the registry, and moved under 99 Archive/Project Archive.",
+            Summary: "The project will be archived, removed from the registry and Kanban Index, and moved under 99 Archive/Project Archive.",
             PlannedSteps: plannedSteps,
             RegistryNotesToRemove: registryNotesToRemove);
 
@@ -997,15 +1037,49 @@ public sealed class ActionsController : ControllerBase
                + content[match.Length..];
     }
 
+    private static void ArchiveProjectFolder(string sourceFolderPath, string archiveFolderPath)
+    {
+        try
+        {
+            Directory.Move(sourceFolderPath, archiveFolderPath);
+            return;
+        }
+        catch (UnauthorizedAccessException)
+        {
+        }
+        catch (IOException)
+        {
+        }
+
+        CopyDirectory(sourceFolderPath, archiveFolderPath);
+        Directory.Delete(sourceFolderPath, recursive: true);
+    }
+
+    private static void CopyDirectory(string sourceDirectory, string destinationDirectory)
+    {
+        Directory.CreateDirectory(destinationDirectory);
+
+        foreach (var filePath in Directory.EnumerateFiles(sourceDirectory))
+        {
+            var destinationPath = Path.Combine(destinationDirectory, Path.GetFileName(filePath));
+            System.IO.File.Copy(filePath, destinationPath, overwrite: false);
+        }
+
+        foreach (var directoryPath in Directory.EnumerateDirectories(sourceDirectory))
+        {
+            var destinationPath = Path.Combine(destinationDirectory, Path.GetFileName(directoryPath));
+            CopyDirectory(directoryPath, destinationPath);
+        }
+    }
+
     private static IReadOnlyList<string> RollBackArchiveMutation(
         string sourceFolderPath,
         string archiveFolderPath,
-        bool moved,
         IReadOnlyDictionary<string, string?> originalFileContents)
     {
         var errors = new List<string>();
 
-        if (moved && Directory.Exists(archiveFolderPath) && !Directory.Exists(sourceFolderPath))
+        if (Directory.Exists(archiveFolderPath) && !Directory.Exists(sourceFolderPath))
         {
             try
             {
@@ -1014,6 +1088,17 @@ public sealed class ActionsController : ControllerBase
             catch (Exception ex)
             {
                 errors.Add($"Could not move archived folder back to source: {ex.Message}");
+            }
+        }
+        else if (Directory.Exists(archiveFolderPath) && Directory.Exists(sourceFolderPath))
+        {
+            try
+            {
+                Directory.Delete(archiveFolderPath, recursive: true);
+            }
+            catch (Exception ex)
+            {
+                errors.Add($"Could not remove partial archive folder: {ex.Message}");
             }
         }
 
@@ -1076,9 +1161,9 @@ public sealed class ActionsController : ControllerBase
                 Priority: GetValue(values, "Priority"),
                 Cadence: GetValue(values, "Cadence"),
                 SessionOrThread: GetValue(values, "Session / thread"),
-                FolderPath: UnwrapCode(GetValue(values, "Folder path")),
-                BacklogPath: UnwrapCode(GetValue(values, "Backlog path")),
-                KanbanPath: UnwrapCode(GetValue(values, "Kanban path"))));
+                FolderPath: ParseRegistryPathValue(GetValue(values, "Folder path")),
+                BacklogPath: ParseRegistryPathValue(GetValue(values, "Backlog path")),
+                KanbanPath: ParseRegistryPathValue(GetValue(values, "Kanban path"))));
         }
 
         return rows;
@@ -1089,6 +1174,64 @@ public sealed class ActionsController : ControllerBase
 
     private static string GetValue(IReadOnlyDictionary<string, string> values, string key) =>
         values.TryGetValue(key, out var value) ? value : string.Empty;
+
+    private static string ParseRegistryPathValue(string value)
+    {
+        var trimmed = value.Trim();
+        if (string.IsNullOrWhiteSpace(trimmed))
+        {
+            return string.Empty;
+        }
+
+        var linkMatch = MarkdownLinkRegex.Match(trimmed);
+        if (linkMatch.Success)
+        {
+            var linkText = NormalizeRelativePath(UnwrapCode(linkMatch.Groups["text"].Value));
+            if (!string.IsNullOrWhiteSpace(linkText))
+            {
+                return linkText;
+            }
+
+            return ResolveRegistryLinkTarget(linkMatch.Groups["target"].Value);
+        }
+
+        return NormalizeRelativePath(UnwrapCode(trimmed));
+    }
+
+    private static string ResolveRegistryLinkTarget(string target)
+    {
+        var cleanTarget = Uri.UnescapeDataString(target.Trim().Trim('<', '>'));
+        if (string.IsNullOrWhiteSpace(cleanTarget))
+        {
+            return string.Empty;
+        }
+
+        cleanTarget = cleanTarget.Split('#', 2)[0].Split('?', 2)[0];
+        if (string.IsNullOrWhiteSpace(cleanTarget))
+        {
+            return string.Empty;
+        }
+
+        if (Uri.TryCreate(cleanTarget, UriKind.Absolute, out _))
+        {
+            return string.Empty;
+        }
+
+        var baseUri = new Uri($"https://vault.local/{RegistryDirectoryRelativePath.Trim('/')}/");
+        var resolved = new Uri(baseUri, cleanTarget);
+        return NormalizeRelativePath(Uri.UnescapeDataString(resolved.AbsolutePath.TrimStart('/')));
+    }
+
+    private static string NormalizeRelativePath(string value)
+    {
+        var normalized = value.Replace('\\', '/').Trim();
+        if (string.IsNullOrWhiteSpace(normalized))
+        {
+            return string.Empty;
+        }
+
+        return string.Join('/', normalized.Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
+    }
 
     private static string UnwrapCode(string value) => value.Trim().Trim('`');
 
@@ -1340,18 +1483,127 @@ Use this note to leave a lightweight trace of landing-zone setup, local-first gr
         return $"| {projectName} | active | P1 | manual until first local work appears | not yet assigned | {escapedFolder} | {backlogPath} | {kanbanPath} | {created} | {created} | none | no |";
     }
 
-    private static void AppendRegistryRow(string registryPath, string registryRow)
+    private static string BuildUpdatedRegistryContent(string registryContent, string registryRow)
     {
-        var content = System.IO.File.ReadAllText(registryPath);
         const string notesHeading = "\n## Notes";
-        var notesIndex = content.IndexOf(notesHeading, StringComparison.Ordinal);
+        var notesIndex = registryContent.IndexOf(notesHeading, StringComparison.Ordinal);
         if (notesIndex < 0)
         {
             throw new InvalidOperationException("Could not find the registry notes section.");
         }
 
-        var updated = content.Insert(notesIndex, registryRow + "\n");
-        System.IO.File.WriteAllText(registryPath, updated);
+        return registryContent.Insert(notesIndex, registryRow + "\n");
+    }
+
+    private static string BuildUpdatedKanbanIndexContent(string kanbanIndexContent, string projectName)
+    {
+        var updated = InsertKanbanIndexLine(
+            kanbanIndexContent,
+            "## Project backlogs",
+            $"- [[Projects/{projectName}/Project Kanban|{projectName} Kanban]]",
+            $"Projects/{projectName}/Project Kanban");
+
+        updated = InsertKanbanIndexLine(
+            updated,
+            "## Active board view",
+            $"- [[Projects/{projectName}/Project Backlog|{projectName} Backlog]]",
+            $"Projects/{projectName}/Project Backlog");
+
+        return InsertKanbanIndexBoard(updated, projectName);
+    }
+
+    private static string InsertKanbanIndexLine(string content, string nextHeading, string lineToInsert, string duplicateMarker)
+    {
+        if (content.Contains(duplicateMarker, StringComparison.Ordinal))
+        {
+            return content;
+        }
+
+        var insertionMarker = "\n" + nextHeading;
+        var insertionIndex = content.IndexOf(insertionMarker, StringComparison.Ordinal);
+        if (insertionIndex < 0)
+        {
+            throw new InvalidOperationException($"Could not find section boundary for '{nextHeading}'.");
+        }
+
+        return content.Insert(insertionIndex, lineToInsert + "\n");
+    }
+
+    private static string InsertKanbanIndexBoard(string content, string projectName)
+    {
+        var boardPath = $"40 Agent Nexus/Projects/{projectName}/Project Kanban.md";
+        if (content.Contains(boardPath, StringComparison.Ordinal))
+        {
+            return content;
+        }
+
+        const string boardsStart = "const boards = [";
+        var boardsStartIndex = content.IndexOf(boardsStart, StringComparison.Ordinal);
+        if (boardsStartIndex < 0)
+        {
+            throw new InvalidOperationException("Could not find the Kanban Index boards array.");
+        }
+
+        var arrayCloseIndex = content.IndexOf("\n];", boardsStartIndex, StringComparison.Ordinal);
+        if (arrayCloseIndex < 0)
+        {
+            throw new InvalidOperationException("Could not find the end of the Kanban Index boards array.");
+        }
+
+        var boardLine = $"  {{ label: \"{projectName}\", path: \"{boardPath}\" }},\n";
+        return content.Insert(arrayCloseIndex + 1, boardLine);
+    }
+
+    private static string BuildArchivedKanbanIndexContent(string kanbanIndexContent, string projectName)
+    {
+        var updated = RemoveKanbanIndexLine(
+            kanbanIndexContent,
+            "## Active project Kanbans",
+            "## Project backlogs",
+            $"- [[Projects/{projectName}/Project Kanban|{projectName} Kanban]]");
+
+        updated = RemoveKanbanIndexLine(
+            updated,
+            "## Project backlogs",
+            "## Active board view",
+            $"- [[Projects/{projectName}/Project Backlog|{projectName} Backlog]]");
+
+        return RemoveKanbanIndexBoard(updated, projectName);
+    }
+
+    private static string RemoveKanbanIndexLine(string content, string sectionHeading, string nextHeading, string lineToRemove)
+    {
+        var sectionStart = content.IndexOf(sectionHeading, StringComparison.Ordinal);
+        if (sectionStart < 0)
+        {
+            throw new InvalidOperationException($"Could not find section '{sectionHeading}'.");
+        }
+
+        var sectionEnd = content.IndexOf("\n" + nextHeading, sectionStart, StringComparison.Ordinal);
+        if (sectionEnd < 0)
+        {
+            throw new InvalidOperationException($"Could not find section boundary for '{sectionHeading}'.");
+        }
+
+        var sectionContent = content.Substring(sectionStart, sectionEnd - sectionStart);
+        if (!sectionContent.Contains(lineToRemove, StringComparison.Ordinal))
+        {
+            return content;
+        }
+
+        return content.Replace(lineToRemove + "\n", string.Empty, StringComparison.Ordinal);
+    }
+
+    private static string RemoveKanbanIndexBoard(string content, string projectName)
+    {
+        var boardPath = $"40 Agent Nexus/Projects/{projectName}/Project Kanban.md";
+        var boardLine = $"  {{ label: \"{projectName}\", path: \"{boardPath}\" }},\n";
+        if (!content.Contains(boardLine, StringComparison.Ordinal))
+        {
+            return content;
+        }
+
+        return content.Replace(boardLine, string.Empty, StringComparison.Ordinal);
     }
 
     private static bool RegistryContainsProject(string registryContent, string projectName)

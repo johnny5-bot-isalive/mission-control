@@ -1,35 +1,26 @@
 using System.Text;
-using System.Text.RegularExpressions;
 
 namespace backend.tests;
 
 internal sealed class MissionControlTestScope : IDisposable
 {
     private readonly string? _previousVaultRoot;
-    private readonly string? _previousReposRoot;
-    private readonly string? _previousPath;
 
     public MissionControlTestScope()
     {
         RootPath = Path.Combine(Path.GetTempPath(), $"mission-control-tests-{Guid.NewGuid():N}");
         VaultRoot = Path.Combine(RootPath, "vault");
-        ReposRoot = Path.Combine(RootPath, "repos");
-
         Directory.CreateDirectory(VaultRoot);
-        Directory.CreateDirectory(ReposRoot);
 
         _previousVaultRoot = Environment.GetEnvironmentVariable("MISSION_CONTROL_VAULT_ROOT");
-        _previousReposRoot = Environment.GetEnvironmentVariable("MISSION_CONTROL_REPOS_ROOT");
-        _previousPath = Environment.GetEnvironmentVariable("PATH");
 
         Environment.SetEnvironmentVariable("MISSION_CONTROL_VAULT_ROOT", VaultRoot);
-        Environment.SetEnvironmentVariable("MISSION_CONTROL_REPOS_ROOT", ReposRoot);
     }
 
     public string RootPath { get; }
     public string VaultRoot { get; }
-    public string ReposRoot { get; }
     public string RegistryPath => Path.Combine(VaultRoot, "40 Agent Nexus", "Project Registry.md");
+    public string KanbanIndexPath => Path.Combine(VaultRoot, "40 Agent Nexus", "Kanban Index.md");
 
     public RegistryProject SeedProject(
         string name,
@@ -153,7 +144,7 @@ project: "{{name}}"
 
         foreach (var project in projects)
         {
-            builder.AppendLine($"| {project.Name} | {project.Status} | P1 | {project.Cadence} | not yet assigned | `{project.FolderRelativePath}` | `{project.BacklogRelativePath}` | `{project.KanbanRelativePath}` | 2026-04-23 | 2026-04-23 | none | no |");
+            builder.AppendLine($"| {project.Name} | {project.Status} | P1 | {project.Cadence} | not yet assigned | `{project.FolderRelativePath}` | {BuildRegistryLink(project.BacklogRelativePath)} | {BuildRegistryLink(project.KanbanRelativePath)} | 2026-04-23 | 2026-04-23 | none | no |");
         }
 
         builder.AppendLine();
@@ -168,66 +159,63 @@ project: "{{name}}"
         builder.AppendLine("#openclaw #agent-ops #workflow #registry");
 
         File.WriteAllText(RegistryPath, builder.ToString());
+        WriteKanbanIndex(projects);
     }
 
-    public string SeedRepo(string projectName)
+    private void WriteKanbanIndex(IEnumerable<RegistryProject> projects)
     {
-        var slug = Regex.Replace(projectName.Trim().ToLowerInvariant(), @"[^a-z0-9]+", "-").Trim('-');
-        var repoPath = Path.Combine(ReposRoot, slug);
-        Directory.CreateDirectory(repoPath);
+        var projectList = projects.ToList();
+        var builder = new StringBuilder();
+        builder.AppendLine("---");
+        builder.AppendLine("type: moc");
+        builder.AppendLine("status: active");
+        builder.AppendLine("created: 2026-04-21");
+        builder.AppendLine("---");
+        builder.AppendLine("# Kanban Index");
+        builder.AppendLine();
+        builder.AppendLine("## Shared control plane");
+        builder.AppendLine("- [[Kanban|Global Kanban]]");
+        builder.AppendLine("- [[Backlog|Global Backlog]]");
+        builder.AppendLine("- [[Project Registry]]");
+        builder.AppendLine();
+        builder.AppendLine("## Active project Kanbans");
+        foreach (var project in projectList)
+        {
+            builder.AppendLine($"- [[Projects/{project.Name}/Project Kanban|{project.Name} Kanban]]");
+        }
+        builder.AppendLine();
+        builder.AppendLine("## Project backlogs");
+        foreach (var project in projectList)
+        {
+            builder.AppendLine($"- [[Projects/{project.Name}/Project Backlog|{project.Name} Backlog]]");
+        }
+        builder.AppendLine();
+        builder.AppendLine("## Active board view");
+        builder.AppendLine("```dataviewjs");
+        builder.AppendLine("const boards = [");
+        builder.AppendLine("  { label: \"Global Kanban\", path: \"40 Agent Nexus/Kanban.md\" },");
+        foreach (var project in projectList)
+        {
+            builder.AppendLine($"  {{ label: \"{project.Name}\", path: \"40 Agent Nexus/Projects/{project.Name}/Project Kanban.md\" }},");
+        }
+        builder.AppendLine("];\n```\n");
+        builder.AppendLine("## Notes");
+        builder.AppendLine("- Test fixture note.");
 
-        File.WriteAllText(Path.Combine(repoPath, "package.json"), $$"""
-{
-  "name": "{{slug}}",
-  "private": true,
-  "scripts": {
-    "test": "node -e \"process.exit(0)\"",
-    "build": "node -e \"process.exit(0)\""
-  }
-}
-""");
-
-        return repoPath;
+        File.WriteAllText(KanbanIndexPath, builder.ToString());
     }
 
-    public string InstallFakeCodex(string finalMessage = "FAKE_CODEX_OK", string output = "fake codex output")
+    private static string BuildRegistryLink(string relativePath)
     {
-        var binPath = Path.Combine(RootPath, "bin");
-        Directory.CreateDirectory(binPath);
+        var encodedTarget = Uri.EscapeDataString(relativePath.Replace('\\', '/').Replace("40 Agent Nexus/", string.Empty))
+            .Replace("%2F", "/");
 
-        var scriptPath = Path.Combine(binPath, "codex");
-        File.WriteAllText(scriptPath, $$"""
-#!/usr/bin/env bash
-set -euo pipefail
-out_file=""
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    -o)
-      out_file="$2"
-      shift 2
-      ;;
-    *)
-      shift
-      ;;
-  esac
-done
-cat >/dev/null
-if [[ -n "$out_file" ]]; then
-  printf '%s\n' '{{finalMessage}}' > "$out_file"
-fi
-printf '%s\n' '{{output}}'
-""");
-
-        System.Diagnostics.Process.Start("/usr/bin/env", $"chmod +x \"{scriptPath}\"")!.WaitForExit();
-        Environment.SetEnvironmentVariable("PATH", $"{binPath}:{_previousPath}");
-        return scriptPath;
+        return $"[`{relativePath}`]({encodedTarget})";
     }
 
     public void Dispose()
     {
         Environment.SetEnvironmentVariable("MISSION_CONTROL_VAULT_ROOT", _previousVaultRoot);
-        Environment.SetEnvironmentVariable("MISSION_CONTROL_REPOS_ROOT", _previousReposRoot);
-        Environment.SetEnvironmentVariable("PATH", _previousPath);
 
         try
         {

@@ -57,6 +57,7 @@ public class ProjectStateActionTests : IClassFixture<WebApplicationFactory<Progr
         var preview = await previewResponse.Content.ReadFromJsonAsync<ArchiveProjectPreviewResponse>();
         Assert.NotNull(preview);
         Assert.Contains(preview!.PlannedSteps, step => step.Contains("Move the project folder", StringComparison.Ordinal));
+        Assert.Contains(preview.PlannedSteps, step => step.Contains("Kanban Index", StringComparison.Ordinal));
         Assert.Single(preview.RegistryNotesToRemove);
 
         var executeResponse = await client.PostAsJsonAsync("/api/actions/archive-project", new ArchiveProjectRequest(project.Name));
@@ -67,6 +68,11 @@ public class ProjectStateActionTests : IClassFixture<WebApplicationFactory<Progr
 
         var registryContent = await File.ReadAllTextAsync(scope.RegistryPath);
         Assert.DoesNotContain("Archive Validation", registryContent);
+
+        var kanbanIndexContent = await File.ReadAllTextAsync(scope.KanbanIndexPath);
+        Assert.DoesNotContain("[[Projects/Archive Validation/Project Kanban|Archive Validation Kanban]]", kanbanIndexContent);
+        Assert.DoesNotContain("[[Projects/Archive Validation/Project Backlog|Archive Validation Backlog]]", kanbanIndexContent);
+        Assert.DoesNotContain("{ label: \"Archive Validation\", path: \"40 Agent Nexus/Projects/Archive Validation/Project Kanban.md\" },", kanbanIndexContent);
 
         var archivedBrief = await File.ReadAllTextAsync(Path.Combine(archiveFolder, "Project Brief.md"));
         Assert.Contains("status: \"archived\"", archivedBrief);
@@ -101,8 +107,11 @@ public class ProjectStateActionTests : IClassFixture<WebApplicationFactory<Progr
         Assert.True(File.Exists(archiveFolder));
 
         var registryContent = await File.ReadAllTextAsync(scope.RegistryPath);
+        var kanbanIndexContent = await File.ReadAllTextAsync(scope.KanbanIndexPath);
         var briefContent = await File.ReadAllTextAsync(briefPath);
         Assert.Equal(originalRegistryContent, registryContent);
+        Assert.Contains("[[Projects/Archive Rollback Validation/Project Kanban|Archive Rollback Validation Kanban]]", kanbanIndexContent);
+        Assert.Contains("[[Projects/Archive Rollback Validation/Project Backlog|Archive Rollback Validation Backlog]]", kanbanIndexContent);
         Assert.Equal(originalBriefContent, briefContent);
     }
 }
