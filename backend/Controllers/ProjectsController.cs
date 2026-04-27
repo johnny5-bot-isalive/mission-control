@@ -1,5 +1,6 @@
 using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Mvc;
+using Swashbuckle.AspNetCore.Annotations;
 
 namespace backend.Controllers;
 
@@ -20,6 +21,8 @@ public sealed class ProjectsController : ControllerBase
     private const string VaultName = "The Nexus";
     private const string DefaultVaultRoot = "/mnt/c/Users/Jaret/Obsidian/The Nexus";
     private const string RegistryRelativePath = "40 Agent Nexus/Project Registry.md";
+    private const string RegistryDirectoryRelativePath = "40 Agent Nexus";
+    private static readonly Regex MarkdownLinkRegex = new(@"^\[(?<text>.+)\]\((?<target>[^)]+)\)$", RegexOptions.Compiled);
 
     private static string VaultRoot =>
         Environment.GetEnvironmentVariable("MISSION_CONTROL_VAULT_ROOT") ?? DefaultVaultRoot;
@@ -28,6 +31,7 @@ public sealed class ProjectsController : ControllerBase
     /// Lists active and inactive projects from the registry, enriched with markdown summary text and primary note links.
     /// </summary>
     [HttpGet]
+    [SwaggerOperation(Summary = "Lists active and inactive projects from the registry, enriched with markdown summary text and primary note links.")]
     public ActionResult<IReadOnlyList<ProjectSummaryResponse>> Get()
     {
         var registryPath = Path.Combine(VaultRoot, RegistryRelativePath.Replace('/', Path.DirectorySeparatorChar));
@@ -172,9 +176,9 @@ public sealed class ProjectsController : ControllerBase
                 Status: GetValue(values, "Status"),
                 Priority: GetValue(values, "Priority"),
                 Cadence: GetValue(values, "Cadence"),
-                FolderPath: UnwrapCode(GetValue(values, "Folder path")),
-                BacklogPath: UnwrapCode(GetValue(values, "Backlog path")),
-                KanbanPath: UnwrapCode(GetValue(values, "Kanban path"))));
+                FolderPath: ParseRegistryPathValue(GetValue(values, "Folder path")),
+                BacklogPath: ParseRegistryPathValue(GetValue(values, "Backlog path")),
+                KanbanPath: ParseRegistryPathValue(GetValue(values, "Kanban path"))));
         }
 
         return rows;
@@ -185,6 +189,64 @@ public sealed class ProjectsController : ControllerBase
 
     private static string GetValue(IReadOnlyDictionary<string, string> values, string key) =>
         values.TryGetValue(key, out var value) ? value : string.Empty;
+
+    private static string ParseRegistryPathValue(string value)
+    {
+        var trimmed = value.Trim();
+        if (string.IsNullOrWhiteSpace(trimmed))
+        {
+            return string.Empty;
+        }
+
+        var linkMatch = MarkdownLinkRegex.Match(trimmed);
+        if (linkMatch.Success)
+        {
+            var linkText = NormalizeRelativePath(UnwrapCode(linkMatch.Groups["text"].Value));
+            if (!string.IsNullOrWhiteSpace(linkText))
+            {
+                return linkText;
+            }
+
+            return ResolveRegistryLinkTarget(linkMatch.Groups["target"].Value);
+        }
+
+        return NormalizeRelativePath(UnwrapCode(trimmed));
+    }
+
+    private static string ResolveRegistryLinkTarget(string target)
+    {
+        var cleanTarget = Uri.UnescapeDataString(target.Trim().Trim('<', '>'));
+        if (string.IsNullOrWhiteSpace(cleanTarget))
+        {
+            return string.Empty;
+        }
+
+        cleanTarget = cleanTarget.Split('#', 2)[0].Split('?', 2)[0];
+        if (string.IsNullOrWhiteSpace(cleanTarget))
+        {
+            return string.Empty;
+        }
+
+        if (Uri.TryCreate(cleanTarget, UriKind.Absolute, out _))
+        {
+            return string.Empty;
+        }
+
+        var baseUri = new Uri($"https://vault.local/{RegistryDirectoryRelativePath.Trim('/')}/");
+        var resolved = new Uri(baseUri, cleanTarget);
+        return NormalizeRelativePath(Uri.UnescapeDataString(resolved.AbsolutePath.TrimStart('/')));
+    }
+
+    private static string NormalizeRelativePath(string value)
+    {
+        var normalized = value.Replace('\\', '/').Trim();
+        if (string.IsNullOrWhiteSpace(normalized))
+        {
+            return string.Empty;
+        }
+
+        return string.Join('/', normalized.Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
+    }
 
     private static string UnwrapCode(string value) => value.Trim().Trim('`');
 
